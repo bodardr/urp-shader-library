@@ -1,12 +1,13 @@
 {
-  "name": "com.romanb.urpshaders",
-  "version": "0.0.1",
+  "name": "com.bodardr.urpshaders",
+  "version": "0.0.2",
   "displayName": "URP Shader Library",
   "description": "A collection of useful URP shaders",
   "unity": "2020.2",
   "dependencies": {
+    "com.bodardr.graphics.reflections": "0.0.1",
     "com.unity.render-pipelines.universal": "10.2.2"
- },
+  },
   "author": {
     "name": "Roman B.",
     "email": "romain.bodard@videotron.ca"
