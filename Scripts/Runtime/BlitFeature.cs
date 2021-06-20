@@ -3,28 +3,12 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 
-public class BlitRenderFeature : ScriptableRendererFeature
+public class BlitFeature : ScriptableRendererFeature
 {
-    [Serializable]
-    public class Settings
-    {
-        public RenderPassEvent renderingEvent;
-
-        public Material blitMaterial;
-
-        [Range(1, 8)]
-        public int passCount = 1;
-
-        [Range(1, 8)]
-        public int downsample = 1;
-
-        public string destinationID;
-    }
+    [SerializeField]
+    private Settings blitSettings = new Settings();
 
     private BlitRenderPass blitPass;
-
-    [SerializeField]
-    private Settings blitSettings;
 
     public override void Create()
     {
@@ -41,38 +25,63 @@ public class BlitRenderFeature : ScriptableRendererFeature
         if (blitSettings.blitMaterial != null)
             blitPass.UpdateSettings(blitSettings);
     }
+
+    [Serializable]
+    public class Settings
+    {
+        public RenderPassEvent renderingEvent;
+
+        public Material blitMaterial;
+
+        [Range(1, 8)]
+        public int passCount = 1;
+
+        [Range(1, 8)]
+        public int downsample = 1;
+
+        public string destinationName = "_Blit";
+    }
 }
 
 public class BlitRenderPass : ScriptableRenderPass
 {
     private Material blitMaterial;
 
-    private int tempID = Shader.PropertyToID("_Temp1");
-    private int temp2ID = Shader.PropertyToID("_Temp2");
-
-    private string destination;
-
-    private int passCount;
+    private int destinationID = 0;
     private int downsample;
 
-    public BlitRenderPass(BlitRenderFeature.Settings blitSettings)
+    private int passCount;
+    private int temp2ID = Shader.PropertyToID("_Temp2");
+
+    private int tempID = Shader.PropertyToID("_Temp1");
+
+    public BlitRenderPass(BlitFeature.Settings settings)
     {
-        UpdateSettings(blitSettings);
+        UpdateSettings(settings);
     }
 
-    public void UpdateSettings(BlitRenderFeature.Settings blitSettings)
+    public void UpdateSettings(BlitFeature.Settings settings)
     {
-        renderPassEvent = blitSettings.renderingEvent;
+        renderPassEvent = settings.renderingEvent;
 
-        blitMaterial = blitSettings.blitMaterial;
-        destination = blitSettings.destinationID;
-        passCount = blitSettings.passCount;
-        downsample = blitSettings.downsample;
+        blitMaterial = settings.blitMaterial;
+
+        if (destinationID > 0)
+        {
+            CommandBuffer cmd = CommandBufferPool.Get();
+            cmd.ReleaseTemporaryRT(destinationID);
+            Graphics.ExecuteCommandBuffer(cmd);
+            CommandBufferPool.Release(cmd);
+        }
+
+        destinationID = Shader.PropertyToID(settings.destinationName);
+        passCount = settings.passCount;
+        downsample = settings.downsample;
     }
 
     public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
     {
-        CommandBuffer cmd = new CommandBuffer {name = "Blit Render Feature"};
+        CommandBuffer cmd = CommandBufferPool.Get("Blit Render Feature");
 
         using (new ProfilingScope(cmd, profilingSampler))
         {
@@ -86,6 +95,7 @@ public class BlitRenderPass : ScriptableRenderPass
 
             cmd.GetTemporaryRT(tempID, targetDescriptor);
             cmd.GetTemporaryRT(temp2ID, targetDescriptor);
+            cmd.GetTemporaryRT(destinationID, targetDescriptor);
 
             cmd.Blit(colorTarget, tempID, blitMaterial);
 
@@ -102,10 +112,11 @@ public class BlitRenderPass : ScriptableRenderPass
                 }
             }
 
-            cmd.Blit(tempID, destination);
-            cmd.SetGlobalTexture(destination, tempID);
+            cmd.Blit(tempID, destinationID);
+            cmd.SetGlobalTexture(destinationID, tempID);
         }
 
         context.ExecuteCommandBuffer(cmd);
+        CommandBufferPool.Release(cmd);
     }
 }

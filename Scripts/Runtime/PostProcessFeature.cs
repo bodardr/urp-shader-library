@@ -5,22 +5,10 @@ using UnityEngine.Rendering.Universal;
 
 public class PostProcessFeature : ScriptableRendererFeature
 {
-    [Serializable]
-    public class Settings
-    {
-        public Material blitMaterial;
-
-        [Range(1, 8)]
-        public int passCount = 1;
-
-        [Range(1, 8)]
-        public int downsample = 1;
-    }
+    [SerializeField]
+    private Settings postSettings = new Settings();
 
     private PostProcessRenderPass postProcessPass;
-
-    [SerializeField]
-    private Settings postSettings;
 
     public override void Create()
     {
@@ -37,31 +25,37 @@ public class PostProcessFeature : ScriptableRendererFeature
         if (postSettings.blitMaterial != null)
             postProcessPass.UpdateSettings(postSettings);
     }
+
+    [Serializable]
+    public class Settings
+    {
+        public Material blitMaterial;
+
+        [Range(1, 8)]
+        public int passCount = 1;
+    }
 }
 
 public class PostProcessRenderPass : ScriptableRenderPass
 {
-    private Material blitMaterial;
-
-    private int tempID = Shader.PropertyToID("_Temp1");
-    private int temp2ID = Shader.PropertyToID("_Temp2");
-
-    private string destinationID = "_CameraColorTexture";
-
-    private int passCount;
     private int downsample;
 
-    public PostProcessRenderPass(PostProcessFeature.Settings blitSettings)
+    private int passCount;
+
+    private Material postMaterial;
+    private int temp2ID = Shader.PropertyToID("_Temp2");
+    private int tempID = Shader.PropertyToID("_Temp1");
+
+    public PostProcessRenderPass(PostProcessFeature.Settings settings)
     {
-        UpdateSettings(blitSettings);
+        renderPassEvent = RenderPassEvent.BeforeRenderingPostProcessing;
+        UpdateSettings(settings);
     }
 
-    public void UpdateSettings(PostProcessFeature.Settings blitSettings)
+    public void UpdateSettings(PostProcessFeature.Settings settings)
     {
-        renderPassEvent = RenderPassEvent.AfterRenderingPostProcessing;
-        blitMaterial = blitSettings.blitMaterial;
-        passCount = blitSettings.passCount;
-        downsample = blitSettings.downsample;
+        postMaterial = settings.blitMaterial;
+        passCount = settings.passCount;
     }
 
     public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
@@ -71,24 +65,19 @@ public class PostProcessRenderPass : ScriptableRenderPass
         using (new ProfilingScope(cmd, profilingSampler))
         {
             var cameraData = renderingData.cameraData;
-
             var colorTarget = cameraData.renderer.cameraColorTarget;
-
             var targetDescriptor = cameraData.cameraTargetDescriptor;
-
-            targetDescriptor.width /= downsample;
-            targetDescriptor.height /= downsample;
 
             cmd.GetTemporaryRT(tempID, targetDescriptor);
             cmd.GetTemporaryRT(temp2ID, targetDescriptor);
 
-            cmd.Blit(colorTarget, tempID, blitMaterial);
+            cmd.Blit(colorTarget, tempID, postMaterial);
 
             if (passCount > 1)
             {
                 for (int i = 0; i < passCount - 1; i++)
                 {
-                    cmd.Blit(tempID, temp2ID, blitMaterial);
+                    cmd.Blit(tempID, temp2ID, postMaterial);
 
                     var swap = tempID;
 
@@ -97,7 +86,10 @@ public class PostProcessRenderPass : ScriptableRenderPass
                 }
             }
 
-            cmd.Blit(tempID, destinationID);
+            cmd.Blit(tempID, BuiltinRenderTextureType.CurrentActive);
+
+            cmd.ReleaseTemporaryRT(tempID);
+            cmd.ReleaseTemporaryRT(temp2ID);
         }
 
         context.ExecuteCommandBuffer(cmd);

@@ -264,7 +264,7 @@
         }
     ],
     "synonyms": [],
-    "m_Precision": 2,
+    "m_Precision": 1,
     "m_PreviewExpanded": false,
     "m_PreviewMode": 2,
     "m_CustomColors": {
@@ -361,15 +361,15 @@
     "m_Group": {
         "m_Id": ""
     },
-    "m_Name": "MainLight (Custom Function)",
+    "m_Name": "SampleMainLight (Custom Function)",
     "m_DrawState": {
         "m_Expanded": true,
         "m_Position": {
             "serializedVersion": "2",
-            "x": -281.0000305175781,
-            "y": 3.999997854232788,
-            "width": 279.0,
-            "height": 166.00001525878907
+            "x": -277.0000305175781,
+            "y": 4.999999523162842,
+            "width": 279.0000305175781,
+            "height": 166.0
         }
     },
     "m_Slots": [
@@ -397,7 +397,7 @@
         "m_SerializableColors": []
     },
     "m_SourceType": 0,
-    "m_FunctionName": "MainLight",
+    "m_FunctionName": "SampleMainLight",
     "m_FunctionSource": "2b6b95c051c88e2498738691db78d9b2",
     "m_FunctionBody": "Enter function body here..."
 }
