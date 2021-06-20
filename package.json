@@ -1,11 +1,10 @@
 {
   "name": "com.bodardr.urpshaders",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "displayName": "URP Shader Library",
   "description": "A collection of useful URP shaders",
   "unity": "2020.2",
   "dependencies": {
-    "com.bodardr.graphics.reflections": "0.0.1",
     "com.unity.render-pipelines.universal": "10.2.2"
   },
   "author": {
