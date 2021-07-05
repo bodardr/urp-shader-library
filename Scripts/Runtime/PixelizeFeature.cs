@@ -13,7 +13,7 @@ public class PixelizeFeature : ScriptableRendererFeature
 
     void OnValidate()
     {
-        if (pixelizeSettings != null)
+        if (pixelizePass != null && pixelizeSettings != null)
             pixelizePass.UpdateSettings(pixelizeSettings);
     }
 
