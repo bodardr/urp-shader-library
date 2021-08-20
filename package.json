@@ -1,6 +1,6 @@
 {
   "name": "com.bodardr.urpshaders",
-  "version": "0.0.20",
+  "version": "0.0.25",
   "displayName": "URP Shader Library",
   "description": "A collection of useful URP shaders",
   "unity": "2020.2",
