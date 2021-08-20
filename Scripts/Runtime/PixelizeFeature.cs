@@ -141,6 +141,9 @@ public class PixelizeRenderPass : ScriptableRenderPass
 
             screenToViewMatrix[1, 1] *= -1;
 
+            if (pixelizeMaterial == null)
+                return;
+            
             pixelizeMaterial.SetMatrixArray(camToWorld, new[]
             {
                 screenToViewMatrix,
