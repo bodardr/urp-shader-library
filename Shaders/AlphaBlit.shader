@@ -13,9 +13,8 @@ Shader "Blit/Alpha"
         }
 
         // No culling or depth
-        Cull Off ZWrite On ZTest Always
-
-        Blend SrcAlpha OneMinusSrcAlpha
+        Cull Off ZWrite Off
+        Blend One One
 
         Pass
         {

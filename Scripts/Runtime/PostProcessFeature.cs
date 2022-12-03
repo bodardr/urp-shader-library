@@ -45,10 +45,11 @@ public class PostProcessRenderPass : ScriptableRenderPass
     private Material postMaterial;
     private int temp2ID = Shader.PropertyToID("_Temp2");
     private int tempID = Shader.PropertyToID("_Temp1");
+    private int cameraColorTexture = Shader.PropertyToID("_CameraColorTexture");
 
     public PostProcessRenderPass(PostProcessFeature.Settings settings)
     {
-        renderPassEvent = RenderPassEvent.BeforeRenderingPostProcessing;
+        renderPassEvent = RenderPassEvent.AfterRenderingTransparents;
         UpdateSettings(settings);
     }
 
@@ -86,7 +87,7 @@ public class PostProcessRenderPass : ScriptableRenderPass
                 }
             }
 
-            cmd.Blit(tempID, BuiltinRenderTextureType.CurrentActive);
+            cmd.Blit(tempID, cameraColorTexture);
 
             cmd.ReleaseTemporaryRT(tempID);
             cmd.ReleaseTemporaryRT(temp2ID);
