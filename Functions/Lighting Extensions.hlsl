@@ -1,7 +1,7 @@
 #ifndef CUSTOM_LIGHTING_INCLUDED
 #define CUSTOM_LIGHTING_INCLUDED
 
-void SampleMainLight_float(float3 worldPosition, out float3 direction, out float3 color, out float distanceAttenuation,
+void SampleMainLight_float(float3 worldNormal, out float3 direction, out float3 color, out float distanceAttenuation,
                            out float shadowAttenuation)
 {
     #ifdef SHADERGRAPH_PREVIEW
@@ -12,10 +12,10 @@ void SampleMainLight_float(float3 worldPosition, out float3 direction, out float
     #else
 
     #if SHADOWS_SCREEN
-        half4 clipPosition = TransformWorldToHClip(worldPosition);
+        half4 clipPosition = TransformWorldToHClip(worldNormal);
         half4 shadowCoord = ComputeScreenPos(clipPosition);
     #else
-    half4 shadowCoord = TransformWorldToShadowCoord(worldPosition);
+    half4 shadowCoord = TransformWorldToShadowCoord(worldNormal);
     #endif
 
     Light mainLight = GetMainLight(shadowCoord);
@@ -39,14 +39,15 @@ void SampleAllLights_float(float3 positionWS, float3 normalWS, float3 viewDir, f
     #else
     half4 shadowCoord = TransformWorldToShadowCoord(positionWS);
     #endif
-
-
+    
     Light mainLight = GetMainLight(shadowCoord);
 
+    /*
     #ifdef _SCREEN_SPACE_OCCLUSION
     AmbientOcclusionFactor aoFactor = GetScreenSpaceAmbientOcclusion(screenSpaceUVs);
     mainLight.color *= aoFactor.directAmbientOcclusion;
     #endif
+    */
 
     mainLight.color *= mainLight.distanceAttenuation * mainLight.shadowAttenuation;
 
@@ -57,13 +58,11 @@ void SampleAllLights_float(float3 positionWS, float3 normalWS, float3 viewDir, f
     for (uint lightIndex = 0u; lightIndex < pixelLightCount; ++lightIndex)
     {
         Light light = GetAdditionalLight(lightIndex, positionWS, shadowCoord);
-        #ifdef _SCREEN_SPACE_OCCLUSION
+        /*#ifdef _SCREEN_SPACE_OCCLUSION
             light.color *= aoFactor.directAmbientOcclusion;
-        #endif
+        #endif*/
         light.color *= light.distanceAttenuation * light.shadowAttenuation;
         color += LightingLambert(light.color, light.direction, normalWS);
-        specularColor += LightingSpecular(light.color, light.direction, normalWS, viewDir, specColor,
-                                         smoothness);
     }
     color /= 1 + pixelLightCount;
     #endif

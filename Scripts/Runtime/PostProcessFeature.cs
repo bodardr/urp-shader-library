@@ -38,14 +38,14 @@ public class PostProcessFeature : ScriptableRendererFeature
 
 public class PostProcessRenderPass : ScriptableRenderPass
 {
-    private int downsample;
+    private static readonly int cameraColorTexture = Shader.PropertyToID("_CameraColorTexture");
+    private static int temp2ID = Shader.PropertyToID("_Temp2");
+    private static int tempID = Shader.PropertyToID("_Temp1");
 
+    private int downsample;
     private int passCount;
 
     private Material postMaterial;
-    private int temp2ID = Shader.PropertyToID("_Temp2");
-    private int tempID = Shader.PropertyToID("_Temp1");
-    private int cameraColorTexture = Shader.PropertyToID("_CameraColorTexture");
 
     public PostProcessRenderPass(PostProcessFeature.Settings settings)
     {
@@ -61,12 +61,12 @@ public class PostProcessRenderPass : ScriptableRenderPass
 
     public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
     {
-        CommandBuffer cmd = new CommandBuffer {name = "Post Process Render Feature"};
+        CommandBuffer cmd = new CommandBuffer { name = "Post Process Render Feature" };
 
         using (new ProfilingScope(cmd, profilingSampler))
         {
             var cameraData = renderingData.cameraData;
-            var colorTarget = cameraData.renderer.cameraColorTarget;
+            var colorTarget = cameraData.renderer.cameraColorTargetHandle;
             var targetDescriptor = cameraData.cameraTargetDescriptor;
 
             cmd.GetTemporaryRT(tempID, targetDescriptor);
@@ -79,11 +79,7 @@ public class PostProcessRenderPass : ScriptableRenderPass
                 for (int i = 0; i < passCount - 1; i++)
                 {
                     cmd.Blit(tempID, temp2ID, postMaterial);
-
-                    var swap = tempID;
-
-                    tempID = temp2ID;
-                    temp2ID = swap;
+                    (tempID, temp2ID) = (temp2ID, tempID);
                 }
             }
 
