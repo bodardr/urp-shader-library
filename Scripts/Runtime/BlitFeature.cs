@@ -64,7 +64,7 @@ public class BlitRenderPass : ScriptableRenderPass
     private int passCount;
     
     private bool useCustomInput;
-    private string customInputID;
+    private RTHandle customInputID;
 
     public BlitRenderPass(BlitFeature.Settings settings)
     {
@@ -85,7 +85,10 @@ public class BlitRenderPass : ScriptableRenderPass
         }
 
         useCustomInput = settings.useCustomInputTexture;
-        customInputID = settings.customInputTextureName;
+        
+        customInputID?.Release();
+        customInputID = RTHandles.Alloc(settings.customInputTextureName);
+        
         destinationID = Shader.PropertyToID(settings.destinationName);
         passCount = settings.passCount;
         downsample = settings.downsample;
@@ -122,24 +125,24 @@ public class BlitRenderPass : ScriptableRenderPass
                 return;
 #endif
 
-            var colorTarget = useCustomInput ? customInputID : cameraData.renderer.cameraColorTarget;
+            var colorTarget = useCustomInput ? customInputID : cameraData.renderer.cameraColorTargetHandle;
 
             var targetDescriptor = cameraData.cameraTargetDescriptor;
             targetDescriptor.width /= downsample;
             targetDescriptor.height /= downsample;
-
-            Blit(cmd, colorTarget, tempID, blitMaterial);
+            
+            cmd.Blit(colorTarget, tempID, blitMaterial);
 
             if (passCount > 1)
             {
                 for (int i = 0; i < passCount - 1; i++)
                 {
-                    Blit(cmd, tempID, temp2ID, blitMaterial);
+                    cmd.Blit(tempID, temp2ID, blitMaterial);
                     (tempID, temp2ID) = (temp2ID, tempID);
                 }
             }
 
-            Blit(cmd, tempID, destinationID);
+            cmd.Blit(tempID, destinationID);
             cmd.SetGlobalTexture(destinationID, destinationID);
         }
 

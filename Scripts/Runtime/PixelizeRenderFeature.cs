@@ -111,7 +111,7 @@ public class PixelizePass : ScriptableRenderPass
             pixelizeMat.SetVector(camBoundsID, new Vector4(botLeft.x, botLeft.y, topRight.x, topRight.y));
             pixelizeMat.SetFloat(pixelsPerUnitID, settings.PixelsPerUnit);
 
-            Blit(cmd, renderTempID, renderingData.cameraData.renderer.cameraColorTarget, pixelizeMat, 0);
+            cmd.Blit(renderTempID, renderingData.cameraData.renderer.cameraColorTargetHandle, pixelizeMat, 0);
             context.ExecuteCommandBuffer(cmd);
 
             CommandBufferPool.Release(cmd);
