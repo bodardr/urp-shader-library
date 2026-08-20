@@ -3,13 +3,14 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.Rendering.RenderGraphModule;
 
 public class PixelizeRenderFeature : ScriptableRendererFeature
 {
     [Serializable]
     public class Settings
     {
-        public RenderPassEvent PassEvent;
+        public RenderPassEvent PassEvent = RenderPassEvent.AfterRenderingOpaques;
         public LayerMask LayerMask;
         public float PixelsPerUnit;
     }
@@ -36,8 +37,6 @@ public class PixelizeRenderFeature : ScriptableRendererFeature
 
 public class PixelizePass : ScriptableRenderPass
 {
-    private static readonly int renderTempID = Shader.PropertyToID("_PixelizeLayerRender");
-    private static readonly int pixelizeTempID = Shader.PropertyToID("_PixelizeTex");
     private static readonly int camBoundsID = Shader.PropertyToID("_CamBounds");
     private static readonly int pixelsPerUnitID = Shader.PropertyToID("_PixelsPerUnit");
 
@@ -47,6 +46,19 @@ public class PixelizePass : ScriptableRenderPass
     private Material pixelizeMat;
 
     public PixelizeRenderFeature.Settings settings;
+
+    private class GeometryPassData
+    {
+        public RendererListHandle rendererList;
+    }
+
+    private class BlitPassData
+    {
+        public Material material;
+        public TextureHandle source;
+        public Vector4 camBounds;
+        public float pixelsPerUnit;
+    }
 
     public PixelizePass()
     {
@@ -60,67 +72,84 @@ public class PixelizePass : ScriptableRenderPass
             new("SRPDefaultUnlit"),
         };
 
-        renderStateBlock = new RenderStateBlock(RenderStateMask.Depth);
-        renderStateBlock.depthState = new DepthState(true);
+        renderStateBlock = new RenderStateBlock(RenderStateMask.Depth)
+        {
+            depthState = new DepthState(true)
+        };
+
         profilingSampler = new ProfilingSampler(nameof(PixelizePass));
     }
 
     private void CreatePixelizeMat()
     {
-        pixelizeMat = new Material(Shader.Find("Hidden/PixelizePass"));
+        var shader = Shader.Find("Hidden/PixelizePass");
+        if (shader != null)
+            pixelizeMat = new Material(shader);
     }
 
-    public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
+    public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
     {
-        cmd.GetTemporaryRT(renderTempID, renderingData.cameraData.cameraTargetDescriptor, FilterMode.Point);
-    }
+        var cameraData = frameData.Get<UniversalCameraData>();
+        var renderingData = frameData.Get<UniversalRenderingData>();
+        var lightData = frameData.Get<UniversalLightData>();
+        var resourceData = frameData.Get<UniversalResourceData>();
 
-    public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
-    {
-        var cmd = CommandBufferPool.Get();
+        if (pixelizeMat == null)
+            CreatePixelizeMat();
 
-        using (new ProfilingScope(cmd, profilingSampler))
+        if (pixelizeMat == null)
+            return;
+
+        var cam = cameraData.camera;
+        var botLeft = cam.ViewportToWorldPoint(Vector2.zero);
+        var topRight = cam.ViewportToWorldPoint(Vector2.one);
+
+        // 1. Allocate the temporary render target via RenderGraph
+        var desc = renderGraph.GetTextureDesc(resourceData.activeColorTexture);
+        desc.name = "_PixelizeLayerRender";
+        var tempTexture = renderGraph.CreateTexture(desc);
+
+        // 2. Build the RendererList for the specified layer mask
+        var drawingSettings = RenderingUtils.CreateDrawingSettings(shaderTagIdList, renderingData, cameraData, lightData, SortingCriteria.CommonOpaque);
+        var filteringSettings = new FilteringSettings(RenderQueueRange.all, settings.LayerMask);
+        var rendererListParams = new RendererListParams(renderingData.cullResults, drawingSettings, filteringSettings);
+        var rendererListHandle = renderGraph.CreateRendererList(rendererListParams);
+
+        // 3. Raster Pass: Draw objects to the temporary texture
+        using (var builder = renderGraph.AddRasterRenderPass<GeometryPassData>("Pixelize Render Objects", out var passData))
         {
-            var cam = renderingData.cameraData.camera;
+            passData.rendererList = rendererListHandle;
 
-            if (!cam.TryGetCullingParameters(out var cullingParameters))
-                return;
+            builder.UseRendererList(rendererListHandle);
+            builder.SetRenderAttachment(tempTexture, 0, AccessFlags.Write);
+            builder.SetRenderAttachmentDepth(tempTexture, AccessFlags.Write);
+            builder.AllowPassCulling(false);
 
-            cullingParameters.cullingMask |= Convert.ToUInt32(settings.LayerMask);
-            var cullResults = context.Cull(ref cullingParameters);
-
-            var sortingCriteria = SortingCriteria.CommonOpaque;
-
-            var drawingSettings = CreateDrawingSettings(shaderTagIdList, ref renderingData, sortingCriteria);
-            var filteringSettings = new FilteringSettings(RenderQueueRange.all, settings.LayerMask);
-
-            cmd.SetRenderTarget(renderTempID);
-            cmd.ClearRenderTarget(true, true, Color.clear);
-            context.ExecuteCommandBuffer(cmd);
-            cmd.Clear();
-
-            context.DrawRenderers(cullResults, ref drawingSettings, ref filteringSettings, ref renderStateBlock);
-            context.Submit();
-
-            var botLeft = cam.ViewportToWorldPoint(Vector2.zero);
-            var topRight = cam.ViewportToWorldPoint(Vector2.one);
-
-            if (pixelizeMat == null)
-                CreatePixelizeMat();
-
-            pixelizeMat.SetVector(camBoundsID, new Vector4(botLeft.x, botLeft.y, topRight.x, topRight.y));
-            pixelizeMat.SetFloat(pixelsPerUnitID, settings.PixelsPerUnit);
-
-            cmd.Blit(renderTempID, renderingData.cameraData.renderer.cameraColorTargetHandle, pixelizeMat, 0);
-            context.ExecuteCommandBuffer(cmd);
-
-            CommandBufferPool.Release(cmd);
+            builder.SetRenderFunc((GeometryPassData data, RasterGraphContext context) =>
+            {
+                context.cmd.ClearRenderTarget(true, true, Color.clear);
+                context.cmd.DrawRendererList(data.rendererList);
+            });
         }
-    }
 
-    public override void OnCameraCleanup(CommandBuffer cmd)
-    {
-        cmd.ReleaseTemporaryRT(renderTempID);
-        //cmd.ReleaseTemporaryRT(pixelizeTempID);
+        // 4. Raster Pass: Blit from temporary texture to camera color target
+        using (var builder = renderGraph.AddRasterRenderPass<BlitPassData>("Pixelize Blit", out var passData))
+        {
+            passData.material = pixelizeMat;
+            passData.source = tempTexture;
+            passData.camBounds = new Vector4(botLeft.x, botLeft.y, topRight.x, topRight.y);
+            passData.pixelsPerUnit = settings.PixelsPerUnit;
+
+            builder.UseTexture(tempTexture);
+            builder.SetRenderAttachment(resourceData.cameraColor, 0);
+            builder.AllowPassCulling(false);
+
+            builder.SetRenderFunc((BlitPassData data, RasterGraphContext context) =>
+            {
+                data.material.SetVector(camBoundsID, data.camBounds);
+                data.material.SetFloat(pixelsPerUnitID, data.pixelsPerUnit);
+                Blitter.BlitTexture(context.cmd, data.source, new Vector4(1, 1, 0, 0), data.material, 0);
+            });
+        }
     }
 }

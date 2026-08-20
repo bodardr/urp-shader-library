@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.Rendering.RenderGraphModule;
 
 public class PostProcessFeature : ScriptableRendererFeature
 {
@@ -17,13 +18,10 @@ public class PostProcessFeature : ScriptableRendererFeature
 
     public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
     {
-        renderer.EnqueuePass(postProcessPass);
-    }
-
-    void Update()
-    {
         if (postSettings.blitMaterial != null)
             postProcessPass.UpdateSettings(postSettings);
+
+        renderer.EnqueuePass(postProcessPass);
     }
 
     [Serializable]
@@ -38,18 +36,19 @@ public class PostProcessFeature : ScriptableRendererFeature
 
 public class PostProcessRenderPass : ScriptableRenderPass
 {
-    private static readonly int cameraColorTexture = Shader.PropertyToID("_CameraColorTexture");
-    private static int temp2ID = Shader.PropertyToID("_Temp2");
-    private static int tempID = Shader.PropertyToID("_Temp1");
-
-    private int downsample;
     private int passCount;
-
     private Material postMaterial;
+
+    private class BlitPassData
+    {
+        public Material material;
+        public TextureHandle source;
+    }
 
     public PostProcessRenderPass(PostProcessFeature.Settings settings)
     {
         renderPassEvent = RenderPassEvent.AfterRenderingTransparents;
+        profilingSampler = new ProfilingSampler(nameof(PostProcessRenderPass));
         UpdateSettings(settings);
     }
 
@@ -59,36 +58,64 @@ public class PostProcessRenderPass : ScriptableRenderPass
         passCount = settings.passCount;
     }
 
-    public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
+    public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
     {
-        CommandBuffer cmd = new CommandBuffer { name = "Post Process Render Feature" };
+        if (postMaterial == null || passCount <= 0)
+            return;
 
-        using (new ProfilingScope(cmd, profilingSampler))
+        var cameraData = frameData.Get<UniversalCameraData>();
+        var resourceData = frameData.Get<UniversalResourceData>();
+
+        if (!resourceData.cameraColor.IsValid())
+            return;
+
+        var desc = cameraData.cameraTargetDescriptor;
+        desc.depthBufferBits = 0;
+
+        // 1. Allocate transient render targets via RenderGraph
+        var temp1 = UniversalRenderer.CreateRenderGraphTexture(renderGraph, desc, "_PostProcessTemp1", false);
+        var temp2 = passCount > 1
+            ? UniversalRenderer.CreateRenderGraphTexture(renderGraph, desc, "_PostProcessTemp2", false)
+            : TextureHandle.nullHandle;
+
+        TextureHandle src = resourceData.cameraColor;
+        TextureHandle dst = temp1;
+
+        // 2. Initial pass: CameraColor -> Temp1
+        AddBlitPass(renderGraph, "PostProcess Blit 0", src, dst, postMaterial);
+
+        src = temp1;
+        dst = temp2;
+
+        // 3. Intermediate ping-pong passes
+        for (int i = 1; i < passCount; i++)
         {
-            var cameraData = renderingData.cameraData;
-            var colorTarget = cameraData.renderer.cameraColorTargetHandle;
-            var targetDescriptor = cameraData.cameraTargetDescriptor;
-
-            cmd.GetTemporaryRT(tempID, targetDescriptor);
-            cmd.GetTemporaryRT(temp2ID, targetDescriptor);
-
-            cmd.Blit(colorTarget, tempID, postMaterial);
-
-            if (passCount > 1)
-            {
-                for (int i = 0; i < passCount - 1; i++)
-                {
-                    cmd.Blit(tempID, temp2ID, postMaterial);
-                    (tempID, temp2ID) = (temp2ID, tempID);
-                }
-            }
-
-            cmd.Blit(tempID, cameraColorTexture);
-
-            cmd.ReleaseTemporaryRT(tempID);
-            cmd.ReleaseTemporaryRT(temp2ID);
+            AddBlitPass(renderGraph, $"PostProcess Blit {i}", src, dst, postMaterial);
+            (src, dst) = (dst, src);
         }
 
-        context.ExecuteCommandBuffer(cmd);
+        // 4. Final pass: Copy result back to CameraColor
+        AddBlitPass(renderGraph, "PostProcess Blit Final", src, resourceData.cameraColor, null);
+    }
+
+    private void AddBlitPass(RenderGraph renderGraph, string passName, TextureHandle source, TextureHandle destination, Material material)
+    {
+        using (var builder = renderGraph.AddRasterRenderPass<BlitPassData>(passName, out var passData))
+        {
+            passData.material = material;
+            passData.source = source;
+
+            builder.UseTexture(source);
+            builder.SetRenderAttachment(destination, 0);
+            builder.AllowPassCulling(false);
+
+            builder.SetRenderFunc((BlitPassData data, RasterGraphContext context) =>
+            {
+                if (data.material != null)
+                    Blitter.BlitTexture(context.cmd, data.source, new Vector4(1, 1, 0, 0), data.material, 0);
+                else
+                    Blitter.BlitTexture(context.cmd, data.source, new Vector4(1, 1, 0, 0), 0.0f, false);
+            });
+        }
     }
 }

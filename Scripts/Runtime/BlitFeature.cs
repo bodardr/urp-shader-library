@@ -7,7 +7,9 @@ using UnityEditor;
 
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.Serialization;
 
 public class BlitFeature : ScriptableRendererFeature
 {
@@ -44,27 +46,35 @@ public class BlitFeature : ScriptableRendererFeature
 
         [Range(1, 8)]
         public int downsample = 1;
-
-        public string destinationName = "_Blit";
-
-        public bool useCustomInputTexture = false;
         
+        public bool useCustomInputTexture = false;
         public string customInputTextureName = "";
+
+        public bool blitToActiveFramebuffer;
+        public bool setGlobalTexture;
+        public string outputTextureName = "_Blit";
     }
 }
 
 public class BlitRenderPass : ScriptableRenderPass
 {
-    private int destinationID = 0;
-    private int temp2ID = Shader.PropertyToID("_Temp2");
-    private int tempID = Shader.PropertyToID("_Temp1");
+    private BlitFeature.Settings settings;
 
-    private Material blitMaterial;
-    private int downsample;
-    private int passCount;
-    
-    private bool useCustomInput;
-    private RTHandle customInputID;
+    public class PassData
+    {
+        public bool useCustomInput;
+
+        public TextureHandle inputTexture;
+        public TextureHandle outputTexture;
+        public TextureHandle tempTexture;
+        public TextureHandle temp2Texture;
+
+        public int passCount;
+
+        public Material blitMaterial;
+        public string outputTextureName;
+        public bool setGlobalTexture;
+    }
 
     public BlitRenderPass(BlitFeature.Settings settings)
     {
@@ -73,80 +83,78 @@ public class BlitRenderPass : ScriptableRenderPass
 
     public void UpdateSettings(BlitFeature.Settings settings)
     {
-        renderPassEvent = settings.renderingEvent;
+        this.settings = settings;
+    }
 
-        blitMaterial = settings.blitMaterial;
+    public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
+    {
+        base.RecordRenderGraph(renderGraph, frameData);
 
-        if (destinationID != 0)
+        var resourceData = frameData.Get<UniversalResourceData>();
+
+        using (var builder = renderGraph.AddUnsafePass("Blit Render Feature", out PassData passData))
         {
-            var cmd = CommandBufferPool.Get();
-            cmd.ReleaseTemporaryRT(destinationID);
-            Graphics.ExecuteCommandBuffer(cmd);
-        }
+            passData.blitMaterial = settings.blitMaterial;
+            passData.setGlobalTexture = settings.setGlobalTexture;
 
-        useCustomInput = settings.useCustomInputTexture;
-        
-        customInputID?.Release();
-        customInputID = RTHandles.Alloc(settings.customInputTextureName);
-        
-        destinationID = Shader.PropertyToID(settings.destinationName);
-        passCount = settings.passCount;
-        downsample = settings.downsample;
-    }
+            passData.inputTexture = resourceData.activeColorTexture;
+            builder.UseTexture(passData.inputTexture);
 
-    public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
-    {
-        var cameraTextureDescriptor = renderingData.cameraData.cameraTargetDescriptor;
+            var textureDescriptor = renderGraph.GetTextureDesc(passData.outputTexture);
+            textureDescriptor.width /= settings.downsample;
+            textureDescriptor.height /= settings.downsample;
 
-        cmd.GetTemporaryRT(destinationID, cameraTextureDescriptor);
-        cmd.GetTemporaryRT(tempID, cameraTextureDescriptor);
-        cmd.GetTemporaryRT(temp2ID, cameraTextureDescriptor);
-    }
-
-    public override void OnCameraCleanup(CommandBuffer cmd)
-    {
-        cmd.ReleaseTemporaryRT(destinationID);
-        cmd.ReleaseTemporaryRT(tempID);
-        cmd.ReleaseTemporaryRT(temp2ID);
-    }
-
-    public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
-    {
-        CommandBuffer cmd = CommandBufferPool.Get("Blit Render Feature");
-        
-        using (new ProfilingScope(cmd, profilingSampler))
-        {
-            var cameraData = renderingData.cameraData;
-
-            var cam = cameraData.camera;
+            textureDescriptor.name = "Blit_Temp1";
+            var tempTexture1 = renderGraph.CreateTexture(textureDescriptor);
+            passData.tempTexture = tempTexture1;
             
-#if UNITY_EDITOR
-            if (SceneView.GetAllSceneCameras().Contains(cam))
-                return;
-#endif
+            textureDescriptor.name = "Blit_Temp2";
+            var tempTexture2 = renderGraph.CreateTexture(textureDescriptor);
+            passData.temp2Texture = tempTexture2;
 
-            var colorTarget = useCustomInput ? customInputID : cameraData.renderer.cameraColorTargetHandle;
-
-            var targetDescriptor = cameraData.cameraTargetDescriptor;
-            targetDescriptor.width /= downsample;
-            targetDescriptor.height /= downsample;
-            
-            cmd.Blit(colorTarget, tempID, blitMaterial);
-
-            if (passCount > 1)
+            if (!settings.blitToActiveFramebuffer)
             {
-                for (int i = 0; i < passCount - 1; i++)
-                {
-                    cmd.Blit(tempID, temp2ID, blitMaterial);
-                    (tempID, temp2ID) = (temp2ID, tempID);
-                }
+                textureDescriptor.name = settings.outputTextureName;
+                passData.outputTextureName = settings.outputTextureName;
+                passData.outputTexture = renderGraph.CreateTexture(textureDescriptor);
             }
+            passData.outputTexture = resourceData.activeColorTexture;
 
-            cmd.Blit(tempID, destinationID);
-            cmd.SetGlobalTexture(destinationID, destinationID);
+            passData.setGlobalTexture = settings.setGlobalTexture;
+            passData.outputTextureName = settings.outputTextureName;
+            
+            builder.SetRenderFunc((PassData data, UnsafeGraphContext context) => Execute(data, context));
+        }
+    }
+
+
+    private static void Execute(PassData passData, UnsafeGraphContext context)
+    {
+        Blit(passData.outputTexture, passData.tempTexture, passData.blitMaterial);
+
+        var tempTexture = passData.tempTexture;
+        var temp2Texture = passData.temp2Texture;
+
+        if (passData.passCount > 1)
+        {
+            for (int i = 0; i < passData.passCount - 1; i++)
+            {
+                Blit(tempTexture, temp2Texture, passData.blitMaterial);
+                (tempTexture, temp2Texture) = (temp2Texture, tempTexture);
+            }
         }
 
-        context.ExecuteCommandBuffer(cmd);
-        CommandBufferPool.Release(cmd);
+        Blit(tempTexture, passData.outputTexture);
+
+        if (passData.setGlobalTexture)
+            context.cmd.SetGlobalTexture(passData.outputTextureName, passData.outputTexture);
+
+
+        void Blit(TextureHandle source, TextureHandle destination, Material blitMaterial = null,
+            int blitMaterialPass = 0)
+        {
+            context.cmd.SetRenderTarget(destination);
+            Blitter.BlitTexture(context.cmd, source, new Vector4(1, 1, 0, 0), blitMaterial, blitMaterialPass);
+        }
     }
 }
